@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '@/store'
-import { SCENE_LABELS, SceneType, Sample } from '@/types'
-import { Plus, Star, Trash2, Pencil, X, Search, Tag, BookOpen } from 'lucide-react'
+import { SCENE_LABELS, TEST_RUN_STATUS_LABELS, SceneType, Sample, type TestRun } from '@/types'
+import { Plus, Star, Trash2, Pencil, X, Search, Tag, BookOpen, History, Clock, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const CATEGORY_COLORS: Record<SceneType, string> = {
@@ -26,13 +26,15 @@ const CATEGORY_PILLS: { value: '' | SceneType; label: string }[] = [
 const emptyForm = { title: '', content: '', category: 'product_intro' as SceneType, tags: [] as string[], tagInput: '' }
 
 export default function SampleLibrary() {
-  const { samples, addSample, updateSample, deleteSample, toggleStarSample } = useStore()
+  const { samples, testRuns, addSample, updateSample, deleteSample, toggleStarSample } = useStore()
   const [search, setSearch] = useState('')
   const [filterCategory, setFilterCategory] = useState<'' | SceneType>('')
   const [showAddModal, setShowAddModal] = useState(false)
   const [editSampleId, setEditSampleId] = useState<string | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [starredOnly, setStarredOnly] = useState(false)
+  const [showHistory, setShowHistory] = useState<string | null>(null)
+  const [historyDetailRun, setHistoryDetailRun] = useState<TestRun | null>(null)
 
   const filtered = samples.filter((s) => {
     if (filterCategory && s.category !== filterCategory) return false
@@ -79,6 +81,18 @@ export default function SampleLibrary() {
   function removeTag(tag: string) {
     setForm({ ...form, tags: form.tags.filter((t) => t !== tag) })
   }
+
+  function formatDate(iso: string) {
+    const d = new Date(iso)
+    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+  }
+
+  const activeSample = showHistory ? samples.find((s) => s.id === showHistory) : null
+  const sampleHistory = activeSample
+    ? testRuns
+        .filter((tr) => tr.sampleSnapshots.some((s) => s.id === activeSample.id))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    : []
 
   return (
     <div className="space-y-6">
@@ -166,7 +180,19 @@ export default function SampleLibrary() {
                   <button onClick={() => openEdit(sample)} className="p-1.5 rounded-lg hover:bg-slate-50 text-slate-400 hover:text-blue-500 transition-colors">
                     <Pencil className="w-4 h-4" />
                   </button>
-                  <button onClick={() => deleteSample(sample.id)} className="p-1.5 rounded-lg hover:bg-slate-50 text-slate-400 hover:text-red-500 transition-colors">
+                  <button
+                    onClick={() => { setShowHistory(sample.id); setHistoryDetailRun(null) }}
+                    className={cn(
+                      'p-1.5 rounded-lg hover:bg-slate-50 transition-colors',
+                      testRuns.some((tr) => tr.sampleSnapshots.some((s) => s.id === sample.id))
+                        ? 'text-slate-400 hover:text-amber-500'
+                        : 'text-slate-200'
+                    )}
+                    title="历史快照"
+                  >
+                    <History className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => deleteSample(sample.id)} className="p-1.5 rounded-lg hover:bg-slate-50 text-slate-400 hover:text-red-500 transition-colors ml-auto">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
@@ -249,6 +275,126 @@ export default function SampleLibrary() {
                 保存
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showHistory && activeSample && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => { setShowHistory(null); setHistoryDetailRun(null) }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[680px] max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+                <History className="w-4 h-4 text-amber-500" />
+                {historyDetailRun
+                  ? `第 ${historyDetailRun.runIndex} 次测试 - 样本快照`
+                  : `「${activeSample.title}」的测试历史`}
+              </h3>
+              <button
+                onClick={() => historyDetailRun ? setHistoryDetailRun(null) : setShowHistory(null)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {!historyDetailRun ? (
+                sampleHistory.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400">
+                    <History className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                    <p>该样本暂无测试记录</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {sampleHistory.map((run) => {
+                      const snap = run.sampleSnapshots.find((s) => s.id === activeSample.id)
+                      return (
+                        <div
+                          key={run.id}
+                          onClick={() => setHistoryDetailRun(run)}
+                          className="flex items-center gap-3 p-3 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-slate-900">第 {run.runIndex} 次测试</span>
+                              <span className={cn(
+                                'text-[10px] px-2 py-0.5 rounded-full',
+                                run.status === 'completed' && 'bg-green-100 text-green-700',
+                                run.status === 'running' && 'bg-amber-100 text-amber-700',
+                                run.status === 'aborted' && 'bg-red-100 text-red-700',
+                              )}>
+                                {TEST_RUN_STATUS_LABELS[run.status]}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
+                              <Clock className="w-3 h-3" />
+                              {formatDate(run.createdAt)}
+                              <span className="text-slate-300">·</span>
+                              <span className={CATEGORY_BADGE_COLORS[(snap?.category || 'product_intro') as SceneType]}>
+                                {SCENE_LABELS[(snap?.category || 'product_intro') as SceneType]}
+                              </span>
+                            </div>
+                            {snap && snap.title !== activeSample.title && (
+                              <div className="text-xs text-amber-600 mt-1">当时标题：{snap.title}</div>
+                            )}
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              ) : (
+                (() => {
+                  const snap = historyDetailRun.sampleSnapshots.find((s) => s.id === activeSample.id)
+                  return (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="bg-slate-50 rounded-lg p-3">
+                          <div className="text-slate-500 text-xs mb-1">测试批次</div>
+                          <div className="font-medium text-slate-900">第 {historyDetailRun.runIndex} 次</div>
+                        </div>
+                        <div className="bg-slate-50 rounded-lg p-3">
+                          <div className="text-slate-500 text-xs mb-1">运行时间</div>
+                          <div className="font-medium text-slate-900">{formatDate(historyDetailRun.createdAt)}</div>
+                        </div>
+                        <div className="bg-slate-50 rounded-lg p-3">
+                          <div className="text-slate-500 text-xs mb-1">参与版本数</div>
+                          <div className="font-medium text-slate-900">{historyDetailRun.promptVersionSnapshots.length} 个</div>
+                        </div>
+                        <div className="bg-slate-50 rounded-lg p-3">
+                          <div className="text-slate-500 text-xs mb-1">场景分类</div>
+                          <div className="font-medium text-slate-900">
+                            {SCENE_LABELS[(snap?.category || 'product_intro') as SceneType]}
+                          </div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
+                          <BookOpen className="w-4 h-4 text-amber-500" />
+                          当时的样本内容快照
+                          {snap && snap.title !== activeSample.title && (
+                            <span className="text-xs text-amber-600">（当时标题：{snap.title}）</span>
+                          )}
+                        </div>
+                        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm text-slate-700 whitespace-pre-wrap max-h-[400px] overflow-auto">
+                          {snap?.content || '(未找到快照)'}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()
+              )}
+            </div>
+            {historyDetailRun && (
+              <div className="px-6 py-3 border-t border-slate-100">
+                <button
+                  onClick={() => setHistoryDetailRun(null)}
+                  className="text-sm text-slate-600 hover:text-slate-800"
+                >
+                  ← 返回列表
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

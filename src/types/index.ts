@@ -2,7 +2,7 @@ export type SceneType = 'product_intro' | 'after_sale' | 'campaign_copy'
 
 export type TaskStatus = 'pending' | 'testing' | 'completed'
 
-export type TestRunStatus = 'running' | 'completed'
+export type TestRunStatus = 'running' | 'completed' | 'aborted'
 
 export interface Task {
   id: string
@@ -85,4 +85,5 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
 export const TEST_RUN_STATUS_LABELS: Record<TestRunStatus, string> = {
   running: '进行中',
   completed: '已完成',
+  aborted: '已中止',
 }

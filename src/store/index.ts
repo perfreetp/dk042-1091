@@ -162,10 +162,11 @@ interface AppState {
     note?: string
   }) => TestRun
   completeTestRun: (runId: string) => void
+  abortTestRun: (runId: string) => void
   deleteTestRun: (runId: string) => void
 
   addTestResult: (tr: Omit<TestResult, 'id'>) => TestResult
-  updateTestResultScore: (id: string, scores: { accuracy: number; tone: number; usability: number }) => void
+  updateTestResultScore: (id: string, scores: Partial<{ accuracy: number; tone: number; usability: number }>) => void
   deleteTestResultsByTask: (taskId: string) => void
   deleteTestResultsByRun: (runId: string) => void
 }
@@ -328,6 +329,16 @@ export const useStore = create<AppState>((set, get) => ({
     })
   },
 
+  abortTestRun: (runId) => {
+    set((s) => {
+      const testRuns = s.testRuns.map((tr) =>
+        tr.id === runId ? { ...tr, status: 'aborted' as const, completedAt: new Date().toISOString() } : tr
+      )
+      saveToStorage('ab_test_runs', testRuns)
+      return { testRuns }
+    })
+  },
+
   deleteTestRun: (runId) => {
     set((s) => {
       const testRuns = s.testRuns.filter((tr) => tr.id !== runId)
@@ -350,7 +361,11 @@ export const useStore = create<AppState>((set, get) => ({
 
   updateTestResultScore: (id, scores) => {
     set((s) => {
-      const testResults = s.testResults.map((tr) => (tr.id === id ? { ...tr, scores, scored: true } : tr))
+      const testResults = s.testResults.map((tr) => {
+        if (tr.id !== id) return tr
+        const merged = { ...tr.scores, ...scores }
+        return { ...tr, scores: merged, scored: true }
+      })
       saveToStorage('ab_test_results', testResults)
       return { testResults }
     })

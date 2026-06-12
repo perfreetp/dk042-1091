@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStore } from '@/store'
-import { SCENE_LABELS } from '@/types'
-import { Plus, Save, Trash2, FileText, Pencil, X, Copy } from 'lucide-react'
+import { SCENE_LABELS, TEST_RUN_STATUS_LABELS, type TestRun } from '@/types'
+import { Plus, Save, Trash2, FileText, Pencil, X, Copy, History, Clock, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export default function PromptEditor() {
-  const { tasks, promptVersions, addPromptVersion, updatePromptVersion, deletePromptVersion } = useStore()
+  const { tasks, promptVersions, testRuns, addPromptVersion, updatePromptVersion, deletePromptVersion } = useStore()
   const { id } = useParams()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -18,10 +18,18 @@ export default function PromptEditor() {
   const [newVersion, setNewVersion] = useState('')
   const [newContent, setNewContent] = useState('')
   const [newNote, setNewNote] = useState('')
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyDetailRun, setHistoryDetailRun] = useState<TestRun | null>(null)
 
   const task = tasks.find((t) => t.id === id)
   const versions = promptVersions.filter((pv) => pv.taskId === id)
   const selected = versions.find((v) => v.id === selectedId)
+
+  const versionHistory = selected
+    ? testRuns
+        .filter((tr) => tr.taskId === id && tr.promptVersionSnapshots.some((s) => s.id === selected.id))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    : []
 
   const nextVersionNum = versions.length + 1
 
@@ -72,6 +80,11 @@ export default function PromptEditor() {
   function formatDate(iso: string) {
     const d = new Date(iso)
     return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+  }
+
+  function openHistory() {
+    setShowHistory(true)
+    setHistoryDetailRun(null)
   }
 
   if (!task) {
@@ -228,6 +241,18 @@ export default function PromptEditor() {
                   复制
                 </button>
                 <button
+                  onClick={openHistory}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+                >
+                  <History className="w-4 h-4" />
+                  历史快照
+                  {versionHistory.length > 0 && (
+                    <span className="bg-amber-500 text-white text-[10px] px-1.5 rounded-full">
+                      {versionHistory.length}
+                    </span>
+                  )}
+                </button>
+                <button
                   onClick={handleDelete}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors ml-auto"
                 >
@@ -292,6 +317,122 @@ export default function PromptEditor() {
                 创建
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl w-[680px] max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+                <History className="w-4 h-4 text-amber-500" />
+                {historyDetailRun
+                  ? `第 ${historyDetailRun.runIndex} 次测试 - 快照详情`
+                  : `${selected?.version} 的历史测试记录`}
+              </h3>
+              <button
+                onClick={() => historyDetailRun ? setHistoryDetailRun(null) : setShowHistory(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {!historyDetailRun ? (
+                versionHistory.length === 0 ? (
+                  <div className="text-center py-10 text-slate-400">
+                    <History className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                    <p>该版本暂无测试记录</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {versionHistory.map((run) => {
+                      const snap = run.promptVersionSnapshots.find((s) => s.id === selected?.id)
+                      return (
+                        <div
+                          key={run.id}
+                          onClick={() => setHistoryDetailRun(run)}
+                          className="flex items-center gap-3 p-3 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-slate-900">第 {run.runIndex} 次测试</span>
+                              <span className={cn(
+                                'text-[10px] px-2 py-0.5 rounded-full',
+                                run.status === 'completed' && 'bg-green-100 text-green-700',
+                                run.status === 'running' && 'bg-amber-100 text-amber-700',
+                                run.status === 'aborted' && 'bg-red-100 text-red-700',
+                              )}>
+                                {TEST_RUN_STATUS_LABELS[run.status]}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
+                              <Clock className="w-3 h-3" />
+                              {formatDate(run.createdAt)}
+                              <span className="text-slate-300">·</span>
+                              {run.promptVersionSnapshots.length} 个版本
+                              <span className="text-slate-300">·</span>
+                              {run.sampleSnapshots.length} 个样本
+                            </div>
+                            {snap && snap.note && (
+                              <div className="text-xs text-slate-400 mt-1">备注：{snap.note}</div>
+                            )}
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-slate-300" />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              ) : (
+                (() => {
+                  const snap = historyDetailRun.promptVersionSnapshots.find((s) => s.id === selected?.id)
+                  return (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="bg-slate-50 rounded-lg p-3">
+                          <div className="text-slate-500 text-xs mb-1">测试批次</div>
+                          <div className="font-medium text-slate-900">第 {historyDetailRun.runIndex} 次</div>
+                        </div>
+                        <div className="bg-slate-50 rounded-lg p-3">
+                          <div className="text-slate-500 text-xs mb-1">运行时间</div>
+                          <div className="font-medium text-slate-900">{formatDate(historyDetailRun.createdAt)}</div>
+                        </div>
+                        <div className="bg-slate-50 rounded-lg p-3">
+                          <div className="text-slate-500 text-xs mb-1">参与版本数</div>
+                          <div className="font-medium text-slate-900">{historyDetailRun.promptVersionSnapshots.length} 个</div>
+                        </div>
+                        <div className="bg-slate-50 rounded-lg p-3">
+                          <div className="text-slate-500 text-xs mb-1">测试样本数</div>
+                          <div className="font-medium text-slate-900">{historyDetailRun.sampleSnapshots.length} 个</div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-amber-500" />
+                          当时的提示词内容快照
+                          {snap?.note && <span className="text-xs text-slate-400">（备注：{snap.note}）</span>}
+                        </div>
+                        <pre className="bg-slate-900 text-green-400 font-mono text-sm rounded-lg p-4 whitespace-pre-wrap overflow-auto max-h-[400px]">
+                          {snap?.content || '(未找到快照)'}
+                        </pre>
+                      </div>
+                    </div>
+                  )
+                })()
+              )}
+            </div>
+            {historyDetailRun && (
+              <div className="px-6 py-3 border-t border-slate-100">
+                <button
+                  onClick={() => setHistoryDetailRun(null)}
+                  className="text-sm text-slate-600 hover:text-slate-800"
+                >
+                  ← 返回列表
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

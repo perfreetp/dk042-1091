@@ -37,7 +37,7 @@ export default function BatchTest() {
   const { id: taskId } = useParams()
   const {
     tasks, promptVersions, samples, testRuns, testResults,
-    createTestRun, completeTestRun, deleteTestRun, addTestResult, updateTask,
+    createTestRun, completeTestRun, abortTestRun, deleteTestRun, addTestResult, updateTask,
   } = useStore()
 
   const [selectedSampleIds, setSelectedSampleIds] = useState<string[]>([])
@@ -47,6 +47,7 @@ export default function BatchTest() {
   const [filterCategory, setFilterCategory] = useState<'' | SceneType>('')
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const currentRunIdRef = useRef<string | null>(null)
 
   const intervalsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
 
@@ -80,7 +81,11 @@ export default function BatchTest() {
     intervalsRef.current.forEach((iv) => clearInterval(iv))
     intervalsRef.current.clear()
     setIsRunning(false)
-  }, [])
+    if (currentRunIdRef.current) {
+      abortTestRun(currentRunIdRef.current)
+      currentRunIdRef.current = null
+    }
+  }, [abortTestRun])
 
   const runTests = useCallback(() => {
     if (!task || selectedSampleIds.length === 0 || versions.length === 0) return
@@ -93,6 +98,7 @@ export default function BatchTest() {
     })
 
     setActiveRunId(testRun.id)
+    currentRunIdRef.current = testRun.id
     setIsRunning(true)
     setStreamingResults(new Map())
     setCompletedKeys(new Set())
@@ -132,6 +138,7 @@ export default function BatchTest() {
             if (pending <= 0) {
               setIsRunning(false)
               completeTestRun(testRun.id)
+              currentRunIdRef.current = null
               updateTask(task.id, { status: 'testing' })
             }
           }
@@ -276,9 +283,17 @@ export default function BatchTest() {
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium',
-                      run.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                      run.status === 'completed'
+                        ? 'bg-green-100 text-green-700'
+                        : run.status === 'aborted'
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-amber-100 text-amber-700'
                     )}>
-                      {run.status === 'running' ? <Zap className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
+                      {run.status === 'running'
+                        ? <Zap className="w-3 h-3" />
+                        : run.status === 'aborted'
+                          ? <Square className="w-3 h-3" />
+                          : <CheckCircle2 className="w-3 h-3" />}
                       {TEST_RUN_STATUS_LABELS[run.status]}
                     </span>
                     <span className="text-xs text-slate-400">
