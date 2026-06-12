@@ -1,5 +1,8 @@
 import { create } from 'zustand'
-import type { Task, PromptVersion, Sample, TestResult, SceneType } from '@/types'
+import type {
+  Task, PromptVersion, Sample, TestResult, SceneType,
+  TestRun, PromptVersionSnapshot, SampleSnapshot,
+} from '@/types'
 
 const DEFAULT_SAMPLES: Sample[] = [
   {
@@ -123,10 +126,19 @@ export function generateMockAnswer(promptContent: string, sampleContent: string,
   return variations[seed % variations.length]
 }
 
+function snapshotPromptVersion(pv: PromptVersion): PromptVersionSnapshot {
+  return { id: pv.id, version: pv.version, content: pv.content, note: pv.note }
+}
+
+function snapshotSample(s: Sample): SampleSnapshot {
+  return { id: s.id, title: s.title, content: s.content, category: s.category }
+}
+
 interface AppState {
   tasks: Task[]
   promptVersions: PromptVersion[]
   samples: Sample[]
+  testRuns: TestRun[]
   testResults: TestResult[]
 
   addTask: (task: Omit<Task, 'id' | 'createdAt' | 'status'>) => Task
@@ -142,9 +154,20 @@ interface AppState {
   deleteSample: (id: string) => void
   toggleStarSample: (id: string) => void
 
+  createTestRun: (params: {
+    taskId: string
+    sceneType: SceneType
+    promptVersionIds: string[]
+    sampleIds: string[]
+    note?: string
+  }) => TestRun
+  completeTestRun: (runId: string) => void
+  deleteTestRun: (runId: string) => void
+
   addTestResult: (tr: Omit<TestResult, 'id'>) => TestResult
   updateTestResultScore: (id: string, scores: { accuracy: number; tone: number; usability: number }) => void
   deleteTestResultsByTask: (taskId: string) => void
+  deleteTestResultsByRun: (runId: string) => void
 }
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -164,6 +187,7 @@ export const useStore = create<AppState>((set, get) => ({
   tasks: loadFromStorage<Task[]>('ab_tasks', []),
   promptVersions: loadFromStorage<PromptVersion[]>('ab_prompt_versions', []),
   samples: loadFromStorage<Sample[]>('ab_samples', DEFAULT_SAMPLES),
+  testRuns: loadFromStorage<TestRun[]>('ab_test_runs', []),
   testResults: loadFromStorage<TestResult[]>('ab_test_results', []),
 
   addTask: (data) => {
@@ -188,11 +212,13 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => {
       const tasks = s.tasks.filter((t) => t.id !== id)
       const promptVersions = s.promptVersions.filter((pv) => pv.taskId !== id)
+      const testRuns = s.testRuns.filter((tr) => tr.taskId !== id)
       const testResults = s.testResults.filter((tr) => tr.taskId !== id)
       saveToStorage('ab_tasks', tasks)
       saveToStorage('ab_prompt_versions', promptVersions)
+      saveToStorage('ab_test_runs', testRuns)
       saveToStorage('ab_test_results', testResults)
-      return { tasks, promptVersions, testResults }
+      return { tasks, promptVersions, testRuns, testResults }
     })
   },
 
@@ -219,10 +245,8 @@ export const useStore = create<AppState>((set, get) => ({
   deletePromptVersion: (id) => {
     set((s) => {
       const promptVersions = s.promptVersions.filter((pv) => pv.id !== id)
-      const testResults = s.testResults.filter((tr) => tr.promptVersionId !== id)
       saveToStorage('ab_prompt_versions', promptVersions)
-      saveToStorage('ab_test_results', testResults)
-      return { promptVersions, testResults }
+      return { promptVersions }
     })
   },
 
@@ -247,10 +271,8 @@ export const useStore = create<AppState>((set, get) => ({
   deleteSample: (id) => {
     set((s) => {
       const samples = s.samples.filter((s2) => s2.id !== id)
-      const testResults = s.testResults.filter((tr) => tr.sampleId !== id)
       saveToStorage('ab_samples', samples)
-      saveToStorage('ab_test_results', testResults)
-      return { samples, testResults }
+      return { samples }
     })
   },
 
@@ -259,6 +281,60 @@ export const useStore = create<AppState>((set, get) => ({
       const samples = s.samples.map((s2) => (s2.id === id ? { ...s2, starred: !s2.starred } : s2))
       saveToStorage('ab_samples', samples)
       return { samples }
+    })
+  },
+
+  createTestRun: ({ taskId, sceneType, promptVersionIds, sampleIds, note }) => {
+    const state = get()
+    const taskRuns = state.testRuns.filter((tr) => tr.taskId === taskId)
+    const runIndex = taskRuns.length + 1
+
+    const pvSnapshots = state.promptVersions
+      .filter((pv) => promptVersionIds.includes(pv.id))
+      .map(snapshotPromptVersion)
+
+    const sampleSnapshots = state.samples
+      .filter((s) => sampleIds.includes(s.id))
+      .map(snapshotSample)
+
+    const testRun: TestRun = {
+      id: generateId(),
+      taskId,
+      runIndex,
+      sceneType,
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      promptVersionSnapshots: pvSnapshots,
+      sampleSnapshots,
+      note,
+    }
+
+    set((s) => {
+      const testRuns = [...s.testRuns, testRun]
+      saveToStorage('ab_test_runs', testRuns)
+      return { testRuns }
+    })
+
+    return testRun
+  },
+
+  completeTestRun: (runId) => {
+    set((s) => {
+      const testRuns = s.testRuns.map((tr) =>
+        tr.id === runId ? { ...tr, status: 'completed' as const, completedAt: new Date().toISOString() } : tr
+      )
+      saveToStorage('ab_test_runs', testRuns)
+      return { testRuns }
+    })
+  },
+
+  deleteTestRun: (runId) => {
+    set((s) => {
+      const testRuns = s.testRuns.filter((tr) => tr.id !== runId)
+      const testResults = s.testResults.filter((tr) => tr.testRunId !== runId)
+      saveToStorage('ab_test_runs', testRuns)
+      saveToStorage('ab_test_results', testResults)
+      return { testRuns, testResults }
     })
   },
 
@@ -283,6 +359,14 @@ export const useStore = create<AppState>((set, get) => ({
   deleteTestResultsByTask: (taskId) => {
     set((s) => {
       const testResults = s.testResults.filter((tr) => tr.taskId !== taskId)
+      saveToStorage('ab_test_results', testResults)
+      return { testResults }
+    })
+  },
+
+  deleteTestResultsByRun: (runId) => {
+    set((s) => {
+      const testResults = s.testResults.filter((tr) => tr.testRunId !== runId)
       saveToStorage('ab_test_results', testResults)
       return { testResults }
     })
